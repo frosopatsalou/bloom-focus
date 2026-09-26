@@ -1,103 +1,42 @@
 # Bloom Focus
 
-Bloom Focus is a local-first Pomodoro and time-tracking application for students. It will support focus sessions, breaks, flexible durations, task or activity links, session recovery, ambient themes, weekly flower progress, and append-only Markdown history in a user-selected Obsidian vault.
+Bloom Focus is a local-first Vue 3 focus and break timer built for the Bloom Productivity System assignment. It keeps honest session history in IndexedDB and can append idempotent Markdown events to a user-selected Obsidian vault.
 
-> **Current status:** Step 4 project setup. The Vue application builds and runs, but the assignment features are not implemented yet.
+## Features
 
-## Prerequisites
+- Focus and break timers with start, pause, resume, cancel, early completion, and automatic zero completion
+- Paused time excluded from actual active duration
+- Editable custom durations and the suggested `25/5, 25/5, 30/10` sequence
+- Active-timer recovery after closing, including an explicit elapsed-session prompt
+- IndexedDB session history, settings, cached tasks, active timer, and pending sync queue
+- Bloom Tasks reconstruction from append-only vault records, plus typed activity fallback
+- Append-only, event-ID-guarded daily Markdown at `Bloom Productivity/Bloom Focus/YYYY/MM/YYYY-MM-DD.md`
+- Three animated illustrated themes, reduced-motion support, generated offline ambient audio, optional completion chime and notifications
+- Five-stage Monday-local weekly flower based only on unique completed focus sessions
+- Installable offline PWA
 
-- Node.js 22 or a compatible current Node.js release
-- npm
-- Desktop Chrome or Edge for the planned Obsidian folder integration
-
-## Setup from a clean clone
+## Run
 
 ```bash
-git clone git@github.com:frosopatsalou/bloom-focus.git
-cd bloom-focus
 npm install
-```
-
-## Run locally
-
-```bash
 npm run dev
 ```
 
-Vite prints the local development address in the terminal.
-
-## Production build
+## Verify
 
 ```bash
-npm run build
-npm run preview
-```
-
-The production files are generated in `dist/`.
-
-## Dependencies
-
-### Application
-
-- Vue 3 — user-interface components
-- Pinia — timer, session, settings, and history state
-
-### Development
-
-- Vite — local development and production builds
-- `@vitejs/plugin-vue` — Vue single-file component support
-- Sass — SCSS compilation
-
-Exact installed versions are recorded in `package.json` and `package-lock.json`.
-
-## Planned local storage
-
-Session history, active timer recovery data, settings, weekly flower state, cached Bloom Tasks information, and pending Obsidian events will be stored locally in IndexedDB. Core timer actions must continue to work offline.
-
-## Planned Obsidian vault configuration
-
-The finished app will provide a **Connect vault** action. The user will select an Obsidian vault or allowed folder through the browser directory picker.
-
-Bloom Focus will append Markdown events under:
-
-```text
-Bloom Productivity/
-└── Bloom Focus/
-    └── YYYY/
-        └── MM/
-            └── YYYY-MM-DD.md
-```
-
-Planned event types:
-
-- `focus.started`
-- `focus.completed`
-- `focus.cancelled`
-- `break.started`
-- `break.completed`
-- `break.cancelled`
-
-Completed and cancelled records will include planned duration, actual active duration, timestamps, status, and the linked task or typed activity. If the vault is unavailable, events will remain in a visible local pending queue until successfully verified in the vault.
-
-## Assignment requirements
-
-The application must eventually:
-
-- work offline;
-- save data locally;
-- start, pause, stop, and complete focus sessions;
-- support breaks and editable durations;
-- connect sessions to a task or short activity;
-- restore an active timer after closing and reopening;
-- review completed sessions;
-- write append-only Markdown history to a user-selected Obsidian vault.
-
-## Git workflow
-
-Commit after each small, working milestone. Before pushing, run:
-
-```bash
+npm test
 npm run build
 ```
 
-Important milestones should be tested again from a clean clone.
+The tests cover the public seams for timer/state/duration, Markdown event formatting, IndexedDB queue/persistence, and weekly flower calculation.
+
+## Obsidian setup
+
+Open **Vault** in the app, choose the root of an Obsidian vault (or another folder), and grant read/write permission. Bloom Focus creates its own predictable folders. If permission is unavailable, actions still succeed locally and the pending event count remains visible. Reconnect and use **Retry pending** later; each event is verified by its stable marker before being marked synchronized.
+
+Bloom Tasks selection expects the sibling app's append-only files under `Bloom Productivity/Bloom Tasks`. If these records are unavailable, type an activity instead.
+
+## Browser support and privacy
+
+Core timer/history/PWA behavior works in modern browsers. Obsidian folder access uses the File System Access API and targets desktop Chrome/Edge. Directory handles and all productivity data stay on the device. Spotify is only an external link; no Spotify authentication is used.
