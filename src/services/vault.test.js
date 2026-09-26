@@ -78,4 +78,26 @@ describe('vault adapter', () => {
       { id: 'task-2', title: 'Write report', status: 'Active' },
     ])
   })
+
+  it('uses append order when task events share second-precision timestamps', () => {
+    const event = (id, type, taskId, title) => `<!-- bloom-event:${id}:start -->\n- **Event ID:** \`${id}\`\n- **Timestamp:** 2026-09-26T10:30:00\n- **Event type:** \`${type}\`\n- **Task ID:** \`${taskId}\`\n- **Task:** ${title}\n<!-- bloom-event:${id}:end -->`
+    const markdown = [
+      event('evt-z-created', 'task.created', 'task-completed', 'Finish notes'),
+      event('evt-a-completed', 'task.completed', 'task-completed', 'Finish notes'),
+      event('evt-z-created-2', 'task.created', 'task-deleted', 'Remove draft'),
+      event('evt-a-deleted', 'task.deleted', 'task-deleted', 'Remove draft'),
+    ].join('\n')
+
+    expect(reconstructTasks(markdown)).toEqual([])
+  })
+
+  it('uses stable file chronology before line order for same-second events', () => {
+    const created = `<!-- bloom-event:evt-z-created:start -->\n- **Timestamp:** 2026-09-26T10:30:00\n- **Event type:** \`task.created\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n<!-- bloom-event:evt-z-created:end -->`
+    const deleted = `<!-- bloom-event:evt-a-deleted:start -->\n- **Timestamp:** 2026-09-26T10:30:00\n- **Event type:** \`task.deleted\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n<!-- bloom-event:evt-a-deleted:end -->`
+
+    expect(reconstructTasks([
+      { path: '2026/09/27.md', markdown: deleted },
+      { path: '2026/09/26.md', markdown: created },
+    ])).toEqual([])
+  })
 })

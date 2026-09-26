@@ -89,6 +89,23 @@ describe('Bloom Focus application', () => {
     wrapper.unmount()
   })
 
+  it('visibly surfaces vault read errors in the vault panel', async () => {
+    const pinia = createPinia()
+    const wrapper = mount(App, { global: { plugins: [pinia] } })
+    await flushPromises()
+    const store = useFocusStore(pinia)
+    await vi.waitFor(() => expect(store.initialized).toBe(true))
+    store.settings = { ...store.settings, onboardingComplete: true }
+    store.vaultStatus = 'Error'
+    store.vaultError = 'Disk read failed'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get('.vault-button').trigger('click')
+
+    expect(wrapper.get('.error-message').text()).toBe('Disk read failed')
+    wrapper.unmount()
+  })
+
   it('asks for confirmation before Stop cancels an active session', async () => {
     const pinia = createPinia()
     const wrapper = mount(App, { global: { plugins: [pinia] } })
@@ -121,7 +138,7 @@ describe('Bloom Focus application', () => {
     wrapper.unmount()
   })
 
-  it('moves focus into dialogs, closes on Escape, and restores the opener', async () => {
+  it('moves focus into dialogs, traps Tab, closes on Escape, and restores the opener', async () => {
     const pinia = createPinia()
     const wrapper = mount(App, { attachTo: document.body, global: { plugins: [pinia] } })
     await flushPromises()
@@ -135,13 +152,49 @@ describe('Bloom Focus application', () => {
 
     await opener.trigger('click')
     await flushPromises()
-    expect(document.activeElement).toBe(wrapper.get('.modal .close').element)
+    const dialog = wrapper.get('.modal')
+    const first = wrapper.get('.modal .close')
+    const last = wrapper.get('.modal .spotify')
+    expect(document.activeElement).toBe(first.element)
     expect(wrapper.get('.topbar').attributes()).toHaveProperty('inert')
+    expect(wrapper.get('.skip-link').attributes()).toHaveProperty('inert')
 
-    await wrapper.get('.modal').trigger('keydown', { key: 'Escape' })
+    last.element.focus()
+    await dialog.trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(first.element)
+
+    first.element.focus()
+    await dialog.trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last.element)
+
+    await dialog.trigger('keydown', { key: 'Escape' })
     await flushPromises()
     expect(wrapper.find('.modal').exists()).toBe(false)
     expect(document.activeElement).toBe(opener.element)
+    wrapper.unmount()
+  })
+
+  it('queues recovered-timer completion behind onboarding for upgrading users', async () => {
+    const pinia = createPinia()
+    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [pinia] } })
+    await flushPromises()
+    const store = useFocusStore(pinia)
+    await vi.waitFor(() => expect(store.initialized).toBe(true))
+    store.settings = { ...store.settings, onboardingComplete: false }
+    store.completionPrompt = true
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('[role="dialog"], [role="alertdialog"]')).toHaveLength(1)
+    expect(wrapper.get('[data-test="onboarding"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-labelledby="recovery-title"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="continue-local"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[role="dialog"], [role="alertdialog"]')).toHaveLength(1)
+    expect(wrapper.find('[data-test="onboarding"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-labelledby="recovery-title"]').exists()).toBe(true)
+    expect(document.activeElement).toBe(wrapper.get('[aria-labelledby="recovery-title"] button').element)
     wrapper.unmount()
   })
 })

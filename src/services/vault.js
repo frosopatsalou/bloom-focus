@@ -46,20 +46,25 @@ export const browserVault = {
       throw error
     }
     const files = []
-    async function walk(dir) {
+    async function walk(dir, path = []) {
       for await (const entry of dir.values()) {
-        if (entry.kind === 'directory') await walk(entry)
-        else if (entry.name.endsWith('.md')) files.push(await (await entry.getFile()).text())
+        if (entry.kind === 'directory') await walk(entry, [...path, entry.name])
+        else if (entry.name.endsWith('.md')) files.push({
+          path: [...path, entry.name].join('/'),
+          markdown: await (await entry.getFile()).text(),
+        })
       }
     }
     await walk(root)
-    return reconstructTasks(files.join('\n'))
+    return reconstructTasks(files)
   },
 }
 
 export function reconstructTasks(markdown) {
   const pattern = /<!-- bloom-event:([^\s:>]+)(?::start)? -->[\s\S]*?<!-- (?:\/bloom-event:\1|bloom-event:\1:end) -->/g
-  const events = [...markdown.matchAll(pattern)].map((match) => {
+  const files = (Array.isArray(markdown) ? markdown : [{ path: '', markdown }])
+    .toSorted((a, b) => a.path.localeCompare(b.path))
+  const events = files.flatMap((file, fileOrder) => [...file.markdown.matchAll(pattern)].map((match) => {
     const block = match[0]
     const field = label => block.match(new RegExp(`\\*\\*${label}:\\*\\*\\s*(?:\\\`)?([^\\n\\\`]+)`))?.[1]?.trim()
     const date = field('Date')
@@ -72,10 +77,12 @@ export function reconstructTasks(markdown) {
       taskId: field('Task ID'),
       title: field('Task'),
       timestamp: Number.isNaN(parsedTime) ? Number.NEGATIVE_INFINITY : parsedTime,
+      fileOrder,
+      lineOrder: match.index,
     }
-  }).filter(event => event.taskId && event.type?.startsWith('task.'))
+  })).filter(event => event.taskId && event.type?.startsWith('task.'))
 
-  events.sort((a, b) => a.timestamp - b.timestamp || a.eventId.localeCompare(b.eventId))
+  events.sort((a, b) => a.timestamp - b.timestamp || a.fileOrder - b.fileOrder || a.lineOrder - b.lineOrder || a.eventId.localeCompare(b.eventId))
 
   const tasks = new Map()
   for (const event of events) {

@@ -23,7 +23,15 @@ const time = computed(() => formatClock(timerView.value?.remainingMs ?? duration
 const locked = computed(() => ['running', 'paused'].includes(state.value))
 const statusClass = computed(() => vaultStatus.value.toLowerCase().replaceAll(' ', '-'))
 const showOnboarding = computed(() => initialized.value && !settings.value.onboardingComplete)
-const backgroundInert = computed(() => Boolean(panel.value || completionPrompt.value || stopConfirmation.value || showOnboarding.value))
+const showRecovery = computed(() => completionPrompt.value && !showOnboarding.value)
+const activeModal = computed(() => {
+  if (showOnboarding.value) return 'onboarding'
+  if (showRecovery.value) return 'recovery'
+  if (stopConfirmation.value) return 'stop'
+  if (panel.value) return 'panel'
+  return null
+})
+const backgroundInert = computed(() => Boolean(activeModal.value))
 const visibleHistory = computed(() => historyFilter.value === 'all'
   ? history.value
   : history.value.filter(session => session.mode === 'focus' && session.status === 'completed'))
@@ -51,8 +59,31 @@ function closePanel() {
   panel.value = null
   nextTick(() => panelOpener?.focus())
 }
+function trapFocus(event, dialog) {
+  if (event.key !== 'Tab') return
+  const focusable = [...dialog?.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || []]
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable.at(-1)
+  if (event.shiftKey ? document.activeElement === first || !dialog.contains(document.activeElement) : document.activeElement === last || !dialog.contains(document.activeElement)) {
+    event.preventDefault()
+    ;(event.shiftKey ? last : first).focus()
+  }
+}
 function onPanelKeydown(event) {
   if (event.key === 'Escape') closePanel()
+  else trapFocus(event, panelDialog.value)
+}
+function onStopKeydown(event) {
+  if (event.key === 'Escape') closeStopConfirmation()
+  else trapFocus(event, stopDialog.value)
+}
+function onOnboardingKeydown(event) {
+  if (event.key === 'Escape') finishOnboarding(false)
+  else trapFocus(event, onboardingDialog.value)
+}
+function onRecoveryKeydown(event) {
+  trapFocus(event, recoveryDialog.value)
 }
 function askToStop() {
   stopOpener = document.activeElement
@@ -76,7 +107,7 @@ watch(() => settings.value.animation, value => document.documentElement.classLis
 watch(showOnboarding, value => {
   if (value) nextTick(() => onboardingDialog.value?.querySelector('button')?.focus())
 })
-watch(completionPrompt, value => {
+watch(showRecovery, value => {
   if (value) nextTick(() => recoveryDialog.value?.querySelector('button')?.focus())
 })
 onMounted(() => store.initialize())
@@ -85,7 +116,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
 
 <template>
   <main class="app-shell" :class="[`theme-${settings.theme}`, { paused: state === 'paused' }]">
-    <a class="skip-link" href="#timer-controls">Skip to timer controls</a>
+    <a class="skip-link" href="#timer-controls" :inert="backgroundInert ? '' : null">Skip to timer controls</a>
     <div class="scene" aria-hidden="true">
       <span v-for="n in 9" :key="n" class="petal" :style="{ '--i': n }"></span>
       <span class="sun"></span><span class="hill hill-one"></span><span class="hill hill-two"></span>
@@ -151,7 +182,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </button>
     </footer>
 
-    <div v-if="showOnboarding" class="modal-backdrop" role="presentation" @keydown.esc="finishOnboarding(false)">
+    <div v-if="activeModal === 'onboarding'" class="modal-backdrop" role="presentation" @keydown="onOnboardingKeydown">
       <section ref="onboardingDialog" data-test="onboarding" class="modal prompt onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <span class="modal-mark">✿</span><p class="eyebrow">Welcome to Bloom Focus</p><h2 id="onboarding-title">Your focus space works locally first</h2>
         <p>Your sessions stay in local browser storage. Optional notifications and audio only run when you enable or play them. Vault access lets Bloom read tasks and append history to Obsidian.</p>
@@ -159,7 +190,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </section>
     </div>
 
-    <div v-if="completionPrompt" class="modal-backdrop" role="presentation">
+    <div v-if="activeModal === 'recovery'" class="modal-backdrop" role="presentation" @keydown="onRecoveryKeydown">
       <section ref="recoveryDialog" class="modal prompt" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
         <span class="modal-mark">✿</span><h2 id="recovery-title">Your timer reached zero</h2>
         <p>Bloom Focus recovered this session after reopening. Confirm how it ended; it has not been silently discarded.</p>
@@ -167,7 +198,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </section>
     </div>
 
-    <div v-if="stopConfirmation" class="modal-backdrop" role="presentation" @click.self="closeStopConfirmation" @keydown.esc="closeStopConfirmation">
+    <div v-if="activeModal === 'stop'" class="modal-backdrop" role="presentation" @click.self="closeStopConfirmation" @keydown="onStopKeydown">
       <section ref="stopDialog" class="modal prompt" role="alertdialog" aria-modal="true" aria-labelledby="stop-title">
         <span class="modal-mark">!</span><h2 id="stop-title">Cancel this {{ mode }} session?</h2>
         <p>Stopping records the active time and marks this {{ mode }} as cancelled.</p>
@@ -175,7 +206,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </section>
     </div>
 
-    <div v-if="panel" class="modal-backdrop" role="presentation" @click.self="closePanel" @keydown="onPanelKeydown">
+    <div v-if="activeModal === 'panel'" class="modal-backdrop" role="presentation" @click.self="closePanel" @keydown="onPanelKeydown">
       <section ref="panelDialog" class="modal drawer" role="dialog" aria-modal="true" :aria-label="`${panel} panel`">
         <button class="close" type="button" aria-label="Close panel" @click="closePanel">×</button>
 

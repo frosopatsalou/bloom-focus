@@ -32,6 +32,7 @@ export const useFocusStore = defineStore('focus', () => {
   const notice = ref('Ready for one meaningful thing.')
   let ticker
   let disposed = false
+  let taskReadError = ''
 
   const timerView = computed(() => timer.value ? snapshotTimer(timer.value, now.value) : null)
   const state = computed(() => timer.value?.state || 'ready')
@@ -146,26 +147,33 @@ export const useFocusStore = defineStore('focus', () => {
       await bloomDb.setVaultHandle(vaultHandle.value)
       vaultStatus.value = 'Connected'
       vaultError.value = ''
-      await refreshTasks()
+      taskReadError = ''
+      if (!(await refreshTasks())) return
       await retryPending()
     } catch (error) {
       if (error.name !== 'AbortError') { vaultStatus.value = 'Error'; vaultError.value = error.message }
     }
   }
   async function refreshTasks() {
-    if (!vaultHandle.value) return
+    if (!vaultHandle.value) return false
     try {
       tasks.value = await browserVault.readTasks(vaultHandle.value)
       await bloomDb.saveTasks(tasks.value)
+      taskReadError = ''
+      return true
     } catch (error) {
       vaultStatus.value = error?.name === 'NotAllowedError' || /permission/i.test(error?.message || '') ? 'Reconnect required' : 'Error'
-      vaultError.value = error?.message || 'The Bloom Tasks records could not be read.'
+      taskReadError = error?.message || 'The Bloom Tasks records could not be read.'
+      vaultError.value = taskReadError
+      return false
     }
   }
   async function retryPending() {
     if (!vaultHandle.value) { vaultStatus.value = 'Reconnect required'; return }
-    vaultStatus.value = 'Syncing'
-    vaultError.value = ''
+    if (!taskReadError) {
+      vaultStatus.value = 'Syncing'
+      vaultError.value = ''
+    }
     for (const event of await bloomDb.listPendingEvents()) {
       try {
         await browserVault.writeEvent(vaultHandle.value, event)
@@ -177,7 +185,10 @@ export const useFocusStore = defineStore('focus', () => {
       }
     }
     pending.value = await bloomDb.listPendingEvents()
-    if (!pending.value.length && vaultStatus.value !== 'Error') vaultStatus.value = 'Connected'
+    if (taskReadError) {
+      vaultStatus.value = 'Error'
+      vaultError.value = taskReadError
+    } else if (!pending.value.length && vaultStatus.value !== 'Error') vaultStatus.value = 'Connected'
   }
   function dispose() {
     disposed = true

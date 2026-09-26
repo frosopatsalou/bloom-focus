@@ -69,4 +69,25 @@ describe('focus store lifecycle and vault reads', () => {
     expect(store.vaultError).toBe('The vault could not be read')
     store.dispose()
   })
+
+  it('keeps cached tasks and the read error after a manual vault connection fails to refresh', async () => {
+    const cached = [{ id: 'task-1', title: 'Cached task', status: 'Active' }]
+    const handle = { name: 'Vault' }
+    const failure = Object.assign(new Error('Disk read failed'), { name: 'NotReadableError' })
+    db.listTasks.mockResolvedValue(cached)
+    vault.choose.mockResolvedValue(handle)
+    vault.readTasks.mockRejectedValue(failure)
+    const store = useFocusStore()
+    await store.initialize()
+
+    await store.connectVault()
+    await store.retryPending()
+
+    expect(store.tasks).toEqual(cached)
+    expect(db.saveTasks).not.toHaveBeenCalled()
+    expect(vault.writeEvent).not.toHaveBeenCalled()
+    expect(store.vaultStatus).toBe('Error')
+    expect(store.vaultError).toBe('Disk read failed')
+    store.dispose()
+  })
 })
