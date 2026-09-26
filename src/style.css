@@ -1,0 +1,27 @@
+:root {
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif;
+  color: #403645;
+  background:
+    radial-gradient(circle at 74% 18%, rgba(255, 245, 190, 0.72), transparent 12%),
+    linear-gradient(180deg, #d8d0ef 0%, #f3d6e0 52%, #afcba9 53%, #91b38f 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
