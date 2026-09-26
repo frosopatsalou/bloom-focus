@@ -10,6 +10,7 @@ import { completionChime } from '../services/audio.js'
 const defaults = {
   focusMinutes: 25, breakMinutes: 5, theme: 'garden', animation: true,
   notifications: false, completionSound: true, ambient: 'rain', ambientVolume: 0.22,
+  onboardingComplete: false,
 }
 const uid = prefix => `${prefix}_${crypto.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`}`
 
@@ -30,6 +31,7 @@ export const useFocusStore = defineStore('focus', () => {
   const completionPrompt = ref(false)
   const notice = ref('Ready for one meaningful thing.')
   let ticker
+  let disposed = false
 
   const timerView = computed(() => timer.value ? snapshotTimer(timer.value, now.value) : null)
   const state = computed(() => timer.value?.state || 'ready')
@@ -62,6 +64,7 @@ export const useFocusStore = defineStore('focus', () => {
         notice.value = 'This timer elapsed while Bloom Focus was closed.'
       }
     }
+    if (disposed) return
     initialized.value = true
     ticker = window.setInterval(tick, 250)
   }
@@ -154,7 +157,10 @@ export const useFocusStore = defineStore('focus', () => {
     try {
       tasks.value = await browserVault.readTasks(vaultHandle.value)
       await bloomDb.saveTasks(tasks.value)
-    } catch (error) { vaultStatus.value = 'Reconnect required'; vaultError.value = error.message }
+    } catch (error) {
+      vaultStatus.value = error?.name === 'NotAllowedError' || /permission/i.test(error?.message || '') ? 'Reconnect required' : 'Error'
+      vaultError.value = error?.message || 'The Bloom Tasks records could not be read.'
+    }
   }
   async function retryPending() {
     if (!vaultHandle.value) { vaultStatus.value = 'Reconnect required'; return }
@@ -173,7 +179,11 @@ export const useFocusStore = defineStore('focus', () => {
     pending.value = await bloomDb.listPendingEvents()
     if (!pending.value.length && vaultStatus.value !== 'Error') vaultStatus.value = 'Connected'
   }
-  function dispose() { clearInterval(ticker) }
+  function dispose() {
+    disposed = true
+    clearInterval(ticker)
+    ticker = undefined
+  }
 
   return {
     initialized, mode, timer, timerView, state, history, tasks, activityText, selectedTaskId,

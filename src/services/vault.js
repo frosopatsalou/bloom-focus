@@ -41,7 +41,10 @@ export const browserVault = {
     try {
       root = await root.getDirectoryHandle('Bloom Productivity')
       root = await root.getDirectoryHandle('Bloom Tasks')
-    } catch { return [] }
+    } catch (error) {
+      if (error?.name === 'NotFoundError') return []
+      throw error
+    }
     const files = []
     async function walk(dir) {
       for await (const entry of dir.values()) {
@@ -55,17 +58,31 @@ export const browserVault = {
 }
 
 export function reconstructTasks(markdown) {
-  const blocks = markdown.match(/<!-- bloom-event:[\s\S]*?<!-- bloom-event:[^\n]+:end -->/g) || []
-  const tasks = new Map()
-  for (const block of blocks) {
+  const pattern = /<!-- bloom-event:([^\s:>]+)(?::start)? -->[\s\S]*?<!-- (?:\/bloom-event:\1|bloom-event:\1:end) -->/g
+  const events = [...markdown.matchAll(pattern)].map((match) => {
+    const block = match[0]
     const field = label => block.match(new RegExp(`\\*\\*${label}:\\*\\*\\s*(?:\\\`)?([^\\n\\\`]+)`))?.[1]?.trim()
-    const type = field('Event type')
-    const id = field('Task ID')
-    if (!id || !type?.startsWith('task.')) continue
-    const prior = tasks.get(id) || { id }
-    const title = field('Task') || prior.title || 'Untitled task'
-    const status = type === 'task.deleted' ? 'Deleted' : type === 'task.completed' ? 'Completed' : 'Active'
-    tasks.set(id, { ...prior, id, title, status })
+    const date = field('Date')
+    const time = field('Time')
+    const timestamp = field('Timestamp') || field('Occurred at') || field('Created at') || (date && time ? `${date}T${time}` : date)
+    const parsedTime = timestamp ? Date.parse(timestamp) : Number.NaN
+    return {
+      eventId: field('Event ID') || match[1],
+      type: field('Event type'),
+      taskId: field('Task ID'),
+      title: field('Task'),
+      timestamp: Number.isNaN(parsedTime) ? Number.NEGATIVE_INFINITY : parsedTime,
+    }
+  }).filter(event => event.taskId && event.type?.startsWith('task.'))
+
+  events.sort((a, b) => a.timestamp - b.timestamp || a.eventId.localeCompare(b.eventId))
+
+  const tasks = new Map()
+  for (const event of events) {
+    const prior = tasks.get(event.taskId) || { id: event.taskId }
+    const title = event.title || prior.title || 'Untitled task'
+    const status = event.type === 'task.deleted' ? 'Deleted' : event.type === 'task.completed' ? 'Completed' : 'Active'
+    tasks.set(event.taskId, { ...prior, id: event.taskId, title, status })
   }
-  return [...tasks.values()].filter(task => task.status === 'Active').sort((a, b) => a.title.localeCompare(b.title))
+  return [...tasks.values()].filter(task => task.status === 'Active').sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id))
 }

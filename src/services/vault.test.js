@@ -45,8 +45,37 @@ describe('vault adapter', () => {
     expect(content.match(/bloom-event:evt-1:start/g)).toHaveLength(1)
   })
 
+  it('propagates vault read failures that are not missing directories', async () => {
+    const failure = Object.assign(new Error('Disk read failed'), { name: 'NotReadableError' })
+    const root = {
+      async queryPermission() { return 'granted' },
+      async getDirectoryHandle() { throw failure },
+    }
+
+    await expect(browserVault.readTasks(root)).rejects.toBe(failure)
+  })
+
+  it('treats a missing Bloom Tasks directory as an empty task list', async () => {
+    const root = {
+      async queryPermission() { return 'granted' },
+      async getDirectoryHandle() { throw new DOMException('Missing directory', 'NotFoundError') },
+    }
+
+    await expect(browserVault.readTasks(root)).resolves.toEqual([])
+  })
+
   it('reconstructs the latest active Bloom Tasks records', () => {
     const markdown = `<!-- bloom-event:evt-a:start -->\n- **Event type:** \`task.created\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n<!-- bloom-event:evt-a:end -->\n<!-- bloom-event:evt-b:start -->\n- **Event type:** \`task.completed\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n<!-- bloom-event:evt-b:end -->\n<!-- bloom-event:evt-c:start -->\n- **Event type:** \`task.created\`\n- **Task ID:** \`task-2\`\n- **Task:** Write report\n<!-- bloom-event:evt-c:end -->`
     expect(reconstructTasks(markdown)).toEqual([{ id: 'task-2', title: 'Write report', status: 'Active' }])
+  })
+
+  it('sorts Bloom Tasks events chronologically before rebuilding task state', () => {
+    const deleted = `<!-- bloom-event:evt-z -->\n### 10:30:00 — Task deleted\n\n- **Event ID:** \`evt-z\`\n- **Date:** 2026-09-26\n- **Time:** 10:30:00\n- **Event type:** \`task.deleted\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n\n<!-- /bloom-event:evt-z -->`
+    const created = `<!-- bloom-event:evt-a -->\n### 09:00:00 — Task created\n\n- **Event ID:** \`evt-a\`\n- **Date:** 2026-09-26\n- **Time:** 09:00:00\n- **Event type:** \`task.created\`\n- **Task ID:** \`task-1\`\n- **Task:** Read chapter\n\n<!-- /bloom-event:evt-a -->`
+    const active = `<!-- bloom-event:evt-b -->\n### 11:00:00 — Task created\n\n- **Event ID:** \`evt-b\`\n- **Date:** 2026-09-26\n- **Time:** 11:00:00\n- **Event type:** \`task.created\`\n- **Task ID:** \`task-2\`\n- **Task:** Write report\n\n<!-- /bloom-event:evt-b -->`
+
+    expect(reconstructTasks(`${deleted}\n${created}\n${active}`)).toEqual([
+      { id: 'task-2', title: 'Write report', status: 'Active' },
+    ])
   })
 })

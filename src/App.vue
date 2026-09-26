@@ -1,19 +1,32 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFocusStore } from './stores/focus.js'
 import { formatClock } from './domain/timer.js'
 import { playAmbient, stopAmbient } from './services/audio.js'
 
 const store = useFocusStore()
-const { mode, timerView, state, history, tasks, activityText, selectedTaskId, settings, pending, vaultStatus, vaultError, completionPrompt, notice, durationMinutes, selectedActivity, flower } = storeToRefs(store)
+const { initialized, mode, timerView, state, history, tasks, activityText, selectedTaskId, settings, pending, vaultStatus, vaultError, completionPrompt, notice, durationMinutes, selectedActivity, flower } = storeToRefs(store)
 const panel = ref(null)
+const panelDialog = ref(null)
+let panelOpener = null
+const stopConfirmation = ref(false)
+const stopDialog = ref(null)
+let stopOpener = null
+const onboardingDialog = ref(null)
+const recoveryDialog = ref(null)
 const ambientPlaying = ref(false)
+const historyFilter = ref('completed-focus')
 const presets = [{ focus: 25, rest: 5, label: '25 / 5' }, { focus: 25, rest: 5, label: '25 / 5' }, { focus: 30, rest: 10, label: '30 / 10' }]
 
 const time = computed(() => formatClock(timerView.value?.remainingMs ?? durationMinutes.value * 60_000))
 const locked = computed(() => ['running', 'paused'].includes(state.value))
 const statusClass = computed(() => vaultStatus.value.toLowerCase().replaceAll(' ', '-'))
+const showOnboarding = computed(() => initialized.value && !settings.value.onboardingComplete)
+const backgroundInert = computed(() => Boolean(panel.value || completionPrompt.value || stopConfirmation.value || showOnboarding.value))
+const visibleHistory = computed(() => historyFilter.value === 'all'
+  ? history.value
+  : history.value.filter(session => session.mode === 'focus' && session.status === 'completed'))
 const historyLabel = session => session.activity?.title || (session.mode === 'break' ? 'Break' : 'Open focus')
 const minutes = ms => {
   const total = Math.round((ms || 0) / 1000)
@@ -29,10 +42,43 @@ async function changeSetting(key, value) {
   await store.updateSettings({ [key]: value })
   if (ambientPlaying.value && ['ambient', 'ambientVolume'].includes(key)) await playAmbient(settings.value.ambient, settings.value.ambientVolume)
 }
-function openPanel(name) { panel.value = name }
-function closePanel() { panel.value = null }
+function openPanel(name) {
+  panelOpener = document.activeElement
+  panel.value = name
+  nextTick(() => panelDialog.value?.querySelector('button, input, select, a[href]')?.focus())
+}
+function closePanel() {
+  panel.value = null
+  nextTick(() => panelOpener?.focus())
+}
+function onPanelKeydown(event) {
+  if (event.key === 'Escape') closePanel()
+}
+function askToStop() {
+  stopOpener = document.activeElement
+  stopConfirmation.value = true
+  nextTick(() => stopDialog.value?.querySelector('button')?.focus())
+}
+function closeStopConfirmation() {
+  stopConfirmation.value = false
+  nextTick(() => stopOpener?.focus())
+}
+async function confirmStop() {
+  stopConfirmation.value = false
+  await store.finalize('cancelled')
+}
+async function finishOnboarding(connectVault = false) {
+  if (connectVault) await store.connectVault()
+  await store.updateSettings({ onboardingComplete: true })
+}
 
 watch(() => settings.value.animation, value => document.documentElement.classList.toggle('motion-off', !value), { immediate: true })
+watch(showOnboarding, value => {
+  if (value) nextTick(() => onboardingDialog.value?.querySelector('button')?.focus())
+})
+watch(completionPrompt, value => {
+  if (value) nextTick(() => recoveryDialog.value?.querySelector('button')?.focus())
+})
 onMounted(() => store.initialize())
 onBeforeUnmount(() => { store.dispose(); stopAmbient() })
 </script>
@@ -46,7 +92,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       <div class="flower-patch"><span></span><span></span><span></span></div>
     </div>
 
-    <header class="topbar">
+    <header class="topbar" :inert="backgroundInert ? '' : null">
       <div class="brand"><span class="brand-mark" aria-hidden="true">✿</span><span><strong>Bloom Focus</strong><small>Make space for one thing.</small></span></div>
       <nav class="header-actions" aria-label="Application controls">
         <button class="glass-button" type="button" @click="changeSetting('animation', !settings.animation)">Animation {{ settings.animation ? 'on' : 'off' }}</button>
@@ -56,7 +102,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </nav>
     </header>
 
-    <section class="timer-zone" aria-labelledby="activity-heading">
+    <section class="timer-zone" aria-labelledby="activity-heading" :inert="backgroundInert ? '' : null">
       <div class="mode-switch" aria-label="Timer mode">
         <button type="button" :class="{ active: mode === 'focus' }" :disabled="locked" @click="store.setMode('focus')">Focus</button>
         <button type="button" :class="{ active: mode === 'break' }" :disabled="locked" @click="store.setMode('break')">Break</button>
@@ -69,12 +115,12 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
           <button class="control primary" type="button" @click="store.begin">Start {{ mode }}</button>
         </template>
         <template v-else-if="state === 'running'">
-          <button class="control danger" type="button" @click="store.finalize('cancelled')">Stop</button>
+          <button class="control danger" type="button" @click="askToStop">Stop</button>
           <button class="control primary" type="button" @click="store.pause">Pause</button>
           <button class="control secondary" type="button" @click="store.finalize('completed')">Complete early</button>
         </template>
         <template v-else-if="state === 'paused'">
-          <button class="control danger" type="button" @click="store.finalize('cancelled')">Stop</button>
+          <button class="control danger" type="button" @click="askToStop">Stop</button>
           <button class="control primary" type="button" @click="store.resume">Resume</button>
           <button class="control secondary" type="button" @click="store.finalize('completed')">Complete early</button>
         </template>
@@ -89,7 +135,7 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </div>
     </section>
 
-    <footer class="dock">
+    <footer class="dock" :inert="backgroundInert ? '' : null">
       <button class="mini-card flower-card" type="button" @click="openPanel('history')">
         <span class="mini-title"><b>This week’s bloom</b><b>{{ flower.count }} / 5</b></span>
         <span class="flower-visual" :class="`stage-${flower.stage}`" aria-hidden="true"><i class="soil"></i><i class="stem"></i><i class="leaf"></i><i class="bud"></i></span>
@@ -105,16 +151,32 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
       </button>
     </footer>
 
+    <div v-if="showOnboarding" class="modal-backdrop" role="presentation" @keydown.esc="finishOnboarding(false)">
+      <section ref="onboardingDialog" data-test="onboarding" class="modal prompt onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <span class="modal-mark">✿</span><p class="eyebrow">Welcome to Bloom Focus</p><h2 id="onboarding-title">Your focus space works locally first</h2>
+        <p>Your sessions stay in local browser storage. Optional notifications and audio only run when you enable or play them. Vault access lets Bloom read tasks and append history to Obsidian.</p>
+        <div class="modal-actions"><button class="control secondary" type="button" @click="finishOnboarding(true)">Connect vault</button><button class="control primary" data-test="continue-local" type="button" @click="finishOnboarding(false)">Continue locally</button></div>
+      </section>
+    </div>
+
     <div v-if="completionPrompt" class="modal-backdrop" role="presentation">
-      <section class="modal prompt" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
+      <section ref="recoveryDialog" class="modal prompt" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
         <span class="modal-mark">✿</span><h2 id="recovery-title">Your timer reached zero</h2>
         <p>Bloom Focus recovered this session after reopening. Confirm how it ended; it has not been silently discarded.</p>
         <div class="modal-actions"><button class="control danger" @click="store.cancelRecoveredCompletion">Mark cancelled</button><button class="control primary" @click="store.acceptRecoveredCompletion">Complete session</button></div>
       </section>
     </div>
 
-    <div v-if="panel" class="modal-backdrop" role="presentation" @click.self="closePanel">
-      <section class="modal drawer" role="dialog" aria-modal="true" :aria-label="`${panel} panel`">
+    <div v-if="stopConfirmation" class="modal-backdrop" role="presentation" @click.self="closeStopConfirmation" @keydown.esc="closeStopConfirmation">
+      <section ref="stopDialog" class="modal prompt" role="alertdialog" aria-modal="true" aria-labelledby="stop-title">
+        <span class="modal-mark">!</span><h2 id="stop-title">Cancel this {{ mode }} session?</h2>
+        <p>Stopping records the active time and marks this {{ mode }} as cancelled.</p>
+        <div class="modal-actions"><button class="control secondary" type="button" @click="closeStopConfirmation">Keep going</button><button class="control danger" data-test="confirm-stop" type="button" @click="confirmStop">Cancel session</button></div>
+      </section>
+    </div>
+
+    <div v-if="panel" class="modal-backdrop" role="presentation" @click.self="closePanel" @keydown="onPanelKeydown">
+      <section ref="panelDialog" class="modal drawer" role="dialog" aria-modal="true" :aria-label="`${panel} panel`">
         <button class="close" type="button" aria-label="Close panel" @click="closePanel">×</button>
 
         <template v-if="panel === 'activity'">
@@ -147,9 +209,13 @@ onBeforeUnmount(() => { store.dispose(); stopAmbient() })
 
         <template v-else-if="panel === 'history'">
           <p class="eyebrow">Session history</p><h2>What you made time for</h2>
-          <div v-if="!history.length" class="empty">Completed and cancelled sessions will appear here.</div>
+          <div class="history-filters" role="group" aria-label="History records">
+            <button type="button" :class="{ active: historyFilter === 'completed-focus' }" @click="historyFilter = 'completed-focus'">Completed focus</button>
+            <button data-test="history-all" type="button" :class="{ active: historyFilter === 'all' }" @click="historyFilter = 'all'">All sessions</button>
+          </div>
+          <div v-if="!visibleHistory.length" class="empty">No sessions match this filter yet.</div>
           <ol v-else class="history-list">
-            <li v-for="session in history" :key="session.id"><span :class="['history-icon', session.status]">{{ session.mode === 'focus' ? '✿' : '☁' }}</span><div><b>{{ historyLabel(session) }}</b><small>{{ dateLabel(session.endedAt) }} · {{ session.mode }}</small><span>Planned {{ minutes(session.plannedMs) }} · Active {{ minutes(session.actualActiveMs) }}</span></div><em :class="session.status">{{ session.status }}</em></li>
+            <li v-for="session in visibleHistory" :key="session.id"><span :class="['history-icon', session.status]">{{ session.mode === 'focus' ? '✿' : '☁' }}</span><div><b>{{ historyLabel(session) }}</b><small v-if="session.activity?.type === 'task'">Task ID: {{ session.activity.id }}</small><small>{{ dateLabel(session.endedAt) }} · {{ session.mode }}</small><span>Planned {{ minutes(session.plannedMs) }} · Active {{ minutes(session.actualActiveMs) }}</span></div><em :class="session.status">{{ session.status }}</em></li>
           </ol>
         </template>
       </section>
